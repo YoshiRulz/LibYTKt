@@ -7,8 +7,7 @@ import kotlinx.cinterop.toKString
 import platform.posix.*
 
 actual fun nativeUAFragment() = memScoped {
-	val osInfo = alloc<utsname>()
-	uname(osInfo.ptr)
+	val osInfo = alloc<utsname>().also { uname(it.ptr) }
 	"${osInfo.sysname.toKString()}/${osInfo.release.toKString()}; ${osInfo.machine.toKString()}"
 }
 

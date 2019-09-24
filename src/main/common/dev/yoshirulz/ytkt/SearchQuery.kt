@@ -1,5 +1,7 @@
 package dev.yoshirulz.ytkt
 
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
 import io.ktor.http.parametersOf
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -10,10 +12,8 @@ import kotlinx.coroutines.coroutineScope
 
 @UseExperimental(ExperimentalCoroutinesApi::class)
 data class SearchQuery(val query: String) {
-	private fun genPaginatedURI(page: Int) = ytCanonicalURI("/search_ajax", parametersOf("style" to listOf("json"), "search_query" to listOf(query), "page" to listOf(page.toString()), "hl" to listOf("en")))
-
-	suspend fun getPartialResults(scraper: YTKtScraper, maxResults: Int): List<Video> = coroutineScope {
-		val resultGen = getResults(scraper, this)
+	suspend fun getPartialResults(httpClient: HttpClient, maxResults: Int): List<Video> = coroutineScope {
+		val resultGen = getResults(httpClient, this)
 		val results = mutableListOf<Video>()
 		try {
 			while (results.size < maxResults) results.add(resultGen.receive())
@@ -24,13 +24,21 @@ data class SearchQuery(val query: String) {
 		results
 	}
 
-	fun getResults(scraper: YTKtScraper, scope: CoroutineScope): ReceiveChannel<Video> = scope.produce {
+	fun getResults(httpClient: HttpClient, scope: CoroutineScope): ReceiveChannel<Video> = scope.produce {
 		var page = 1
 		var tempPageResults: List<YTVideoDetails>
 		while (true) {
-			tempPageResults = YTSearchResults.parse(scraper.get(genPaginatedURI(page++))).video
+			tempPageResults = YTSearchResults.parse(httpClient.get(ytCanonicalURI(
+				"/search_ajax",
+				parametersOf(
+					"style" to listOf("json"),
+					"search_query" to listOf(query),
+					"page" to listOf(page++.toString()),
+					"hl" to listOf("en")
+				)
+			))).video
 			if (tempPageResults.isEmpty()) break
-			tempPageResults.forEach { send(Video.fromJSON(it)) }
+			tempPageResults.forEach { this.send(Video.fromJSON(it)) }
 		}
 	}
 }

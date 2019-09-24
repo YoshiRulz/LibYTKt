@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "dev.yoshirulz"
-version = "0.1.0"
+version = "0.1.1"
 
 repositories {
 	jcenter()
@@ -22,11 +22,13 @@ kotlin {
 
 	@Suppress("UNUSED_VARIABLE")
 	sourceSets {
-		fun kotlinx(module: String, version: String) = "org.jetbrains.kotlinx:kotlinx-$module:$version"
+		fun depStr(partialCoords: String, version: String) = "$partialCoords:$version"
+
+		fun kotlinx(module: String, version: String) = depStr("org.jetbrains.kotlinx:kotlinx-$module", version)
 
 		fun coroutinesCore(module: String) = kotlinx("coroutines-core-$module", "1.3.1")
 
-		fun ktorClient(module: String) = "io.ktor:ktor-client-$module:1.3.0-beta-1"
+		fun ktorClient(module: String) = depStr("io.ktor:ktor-client-$module", "1.3.0-beta-1")
 
 		all {
 			languageSettings.enableLanguageFeature("InlineClasses")

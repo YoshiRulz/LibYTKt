@@ -15,7 +15,7 @@ object StructuredTestData {
 	@Retention(AnnotationRetention.SOURCE)
 	annotation class VolatileRemoteData
 
-	interface MockProvder {
+	interface MockProvider {
 		fun mockFromParams(params: Parameters): Pair<String?, HttpStatusCode>
 	}
 
@@ -33,7 +33,7 @@ object StructuredTestData {
 		val valid = arrayOf("UCEnBXANsKmyj2r9xVyKoDiQ") // normal
 	}
 
-	object PlaylistData: MockProvder {
+	object PlaylistData: MockProvider {
 		/** TODO refactor to be private and then move to RawTestData */
 		@VolatileRemoteData
 		val rawResults = mapOf(
@@ -87,7 +87,7 @@ object StructuredTestData {
 		val valid = valid_unusable + valid_usable
 	}
 
-	object SearchResults: MockProvder {
+	object SearchResults: MockProvider {
 		val queries = arrayOf(
 			SearchQuery("gdq"),
 			SearchQuery("tool assisted speedrun")
@@ -294,7 +294,7 @@ object StructuredTestData {
 		val valid = valid_nonexistent + valid_existent
 	}
 
-	object VideoInfoMaps: MockProvder {
+	object VideoInfoMaps: MockProvider {
 		override fun mockFromParams(params: Parameters): Pair<String?, HttpStatusCode> {
 			val rawVID = params["video_id"] ?: EMPTY_STRING
 			return Pair(

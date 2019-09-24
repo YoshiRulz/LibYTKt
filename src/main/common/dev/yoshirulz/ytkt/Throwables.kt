@@ -1,5 +1,7 @@
 package dev.yoshirulz.ytkt
 
+class PageRequestFailureException: Exception("GET request failed or could not parse HTML from response body")
+
 /** Thrown when certain essential information can't be extracted, usually because YouTube changed some internals somewhere */
 class UnrecognisedStructureException(failedOn: String): Exception("Could not find signature decipherer function $failedOn.")
 

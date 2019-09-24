@@ -5,6 +5,7 @@ import io.ktor.http.Parameters
 import io.ktor.http.decodeURLQueryComponent
 import io.ktor.http.parseUrlEncodedParameters
 import io.ktor.util.KtorExperimentalAPI
+import kotlinx.coroutines.coroutineScope
 
 typealias AdaptiveStreamMetadataSet = Pair<List<AudioOnlyStreamMetadata>, List<VideoOnlyStreamMetadata>>
 
@@ -22,33 +23,35 @@ interface StreamMetadata {
 	/** In bytes (B). */ val size: ULong
 	/** In bits per second (b/s). */ val bitrate: ULong
 
-	fun getStream(scraper: YTKtScraper): MediaStream = scraper.httpClient.stream(this)
+	fun getStream(httpClient: HttpClient): MediaStream = httpClient.stream(this)
 
 	companion object {
 		val REGEX_A = Regex("""clen[/=](\d+)""")
 
 		private val REGEX_C = Regex("""/s/([^/]*)""") //TODO doesn't need to be regex
 
-		@RequiresXMLParser
-		internal suspend fun adaptiveFromDASHManifest(scraper: YTKtScraper, playerSourceURI: String, dashManifestUrlOrig: String): AdaptiveStreamMetadataSet {
+		internal suspend fun adaptiveFromDASHManifest(httpClient: HttpClient, decipherer: Decipherer, playerSourceURI: String, dashManifestUrlOrig: String): AdaptiveStreamMetadataSet {
 			val audioStreamsMetadata = mutableListOf<AudioOnlyStreamMetadata>()
 			val videoStreamsMetadata = mutableListOf<VideoOnlyStreamMetadata>()
 			val dashManifestUrl = REGEX_C.find(dashManifestUrlOrig)?.let { match ->
 				match.groupValues[1].takeIf { it.isNotBlank() }
 			}?.let { // need to decipher signature and set it in the URI
-				dashManifestUrlOrig.setURIPathEncParam("signature", scraper.decipherer.getDecipherRoutine(playerSourceURI, scraper.httpClient).decipher(it))
+				dashManifestUrlOrig.setURIPathEncParam("signature", decipherer.decipher(it, playerSourceURI, httpClient))
 			} ?: dashManifestUrlOrig
-			for (streamInfoXML in scraper.getAndParseXML(dashManifestUrl.parseURI())
-				.descendants("Representation") // get representation nodes from DASH manifest
-				.filter { it.descendants("Initialization").firstOrNull()?.attribute("sourceURL")?.value?.contains("sq/") != true } // skip partial streams
-			) {
-				val iTag = ITag(streamInfoXML.attribute("id").value.toInt())
+			for (streamInfoXML in coroutineScope {
+				requestXMLProxied(dashManifestUrl, httpClient, this)
+					.receiveSingleOrElse { throw PageRequestFailureException() }
+					.root
+					.descendants("Representation") // get representation nodes from DASH manifest
+					.filter { it.descendants("Initialization").firstOrNull()?.attribute("sourceURL")?.contains("sq/") != true } // skip partial streams
+			}) {
+				val iTag = ITag(streamInfoXML.attribute("id").toInt())
 				val uri = streamInfoXML.element("BaseURL")!!.toString()
 				val (rawContainer, rawContentLength) =
 					if (uri.contains('?')) uri.parseUrlEncodedParameters().let { params -> Pair(params["mime"]!!.substringAfter('/'), params["clen"]!!) }
 					else Pair(uri.substringAfter("/mime/").substringBefore('/').decodeURLQueryComponent(), uri.substringAfter("/clen/").substringBefore('/').decodeURLQueryComponent())
 				val (container, contentLength) = Pair(Container.parse(rawContainer)!!, rawContentLength.toULong())
-				val bitrate = streamInfoXML.attribute("bandwidth").value.toULong()
+				val bitrate = streamInfoXML.attribute("bandwidth").toULong()
 				if (streamInfoXML.element("AudioChannelConfiguration") != null) { // audio-only
 					audioStreamsMetadata.add(AudioOnlyStreamMetadata(
 						iTag,
@@ -56,7 +59,7 @@ interface StreamMetadata {
 						container,
 						contentLength,
 						bitrate,
-						AudioEncoding.parse(streamInfoXML.attribute("codecs").value)!!
+						AudioEncoding.parse(streamInfoXML.attribute("codecs"))!!
 					))
 				} else { // video-only
 					videoStreamsMetadata.add(VideoOnlyStreamMetadata(
@@ -65,17 +68,17 @@ interface StreamMetadata {
 						container,
 						contentLength,
 						bitrate,
-						VideoEncoding.parse(streamInfoXML.attribute("codecs").value)!!,
+						VideoEncoding.parse(streamInfoXML.attribute("codecs"))!!,
 						iTag.videoQuality!!,
-						VideoResolution(streamInfoXML.attribute("width").value.toUShort(), streamInfoXML.attribute("height").value.toUShort()),
-						streamInfoXML.attribute("frameRate").value.toUInt()
+						VideoResolution(streamInfoXML.attribute("width").toUShort(), streamInfoXML.attribute("height").toUShort()),
+						streamInfoXML.attribute("frameRate").toUInt()
 					))
 				}
 			}
 			return AdaptiveStreamMetadataSet(audioStreamsMetadata, videoStreamsMetadata)
 		}
 
-		internal suspend fun adaptiveFromMetadata(scraper: YTKtScraper, playerSourceURI: String, adaptiveMetadataUrlEncoded: String): AdaptiveStreamMetadataSet {
+		internal suspend fun adaptiveFromMetadata(httpClient: HttpClient, decipherer: Decipherer, playerSourceURI: String, adaptiveMetadataUrlEncoded: String): AdaptiveStreamMetadataSet {
 			val audioStreamsMetadata = mutableListOf<AudioOnlyStreamMetadata>()
 			val videoStreamsMetadata = mutableListOf<VideoOnlyStreamMetadata>()
 			for (qParams in adaptiveMetadataUrlEncoded
@@ -90,13 +93,13 @@ interface StreamMetadata {
 					if (signature.isNullOrBlank()) it
 					else it.copyAndSetParam(
 						qParams["sp"] ?: "signature",
-						scraper.decipherer.getDecipherRoutine(playerSourceURI, scraper.httpClient).decipher(signature)
+						decipherer.decipher(signature, playerSourceURI, httpClient)
 					)
 				}
 				val container = Container.parse(qParams["type"]!!.substringAfter('/').substringBefore(';'))!!
 				var contentLength = REGEX_A.find(uri.toString())!!.groupValues[1].toULongOrNull() ?: 0UL
 				if (contentLength == 0UL) { // couldn't extract content length, get it manually
-					contentLength = scraper.httpClient.getContentLength(uri) ?: 0UL
+					contentLength = httpClient.getContentLength(uri) ?: 0UL
 					if (contentLength == 0UL) continue // still not available, stream is gone or faulty
 				}
 				if (qParams["type"]!!.startsWith("audio/")) { // audio-only
@@ -188,7 +191,7 @@ class AudioVisualStreamMetadata(
 				if (signature.isNullOrBlank()) it
 				else it.copyAndSetParam(
 					qParams["sp"] ?: "signature",
-					decipherer.getDecipherRoutine(playerSourceURI, httpClient).decipher(signature)
+					decipherer.decipher(signature, playerSourceURI, httpClient)
 				)
 			}
 			var contentLength = StreamMetadata.REGEX_A.find(uri.toString())!!.groupValues[1].toULongOrNull() ?: 0UL

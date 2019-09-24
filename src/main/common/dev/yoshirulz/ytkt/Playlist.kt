@@ -4,6 +4,7 @@ import io.ktor.http.parametersOf
 
 @UseExperimental(ExperimentalUnsignedTypes::class)
 data class Playlist(val id: PlaylistID, val author: String, val title: String, val description: String, val viewCount: ULong, val videos: List<Video>) {
+	/** The playlist page. */
 	@EntryPoint
 	val canonicalURI: URI get() = id.canonicalURI
 

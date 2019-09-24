@@ -4,7 +4,8 @@ package dev.yoshirulz.ytkt
 
 import io.ktor.utils.io.core.Closeable
 
-private fun noTODO(): Nothing = throw NotImplementedError()
+@Suppress("NOTHING_TO_INLINE")
+private inline fun noTODO(): Nothing = throw NotImplementedError()
 
 interface Stream: Closeable
 

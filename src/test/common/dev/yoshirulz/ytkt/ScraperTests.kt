@@ -1,7 +1,7 @@
 package dev.yoshirulz.ytkt
 
 import dev.yoshirulz.ytkt.StructuredTestData.ChannelIDs
-import dev.yoshirulz.ytkt.StructuredTestData.MockProvder
+import dev.yoshirulz.ytkt.StructuredTestData.MockProvider
 import dev.yoshirulz.ytkt.StructuredTestData.PlaylistData
 import dev.yoshirulz.ytkt.StructuredTestData.PlaylistIDs
 import dev.yoshirulz.ytkt.StructuredTestData.SearchResults
@@ -14,17 +14,20 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.respondError
 import io.ktor.client.features.ClientRequestException
 import io.ktor.client.features.json.JsonFeature
-import io.ktor.client.request.HttpRequestData
-import io.ktor.client.request.HttpResponseData
 import io.ktor.http.ContentType
 import io.ktor.http.Headers
-import io.ktor.http.Parameters
 import io.ktor.http.headersOf
 import io.ktor.utils.io.core.use
 import kotlinx.coroutines.delay
 import kotlin.test.Ignore
 import kotlin.test.Test
 import kotlin.test.fail
+
+/** for native, waiting on [Kotlin/kotlinx.serialization#188](https://github.com/Kotlin/kotlinx.serialization/issues/188), one of the contributors has made a separate library but it doesn't target Kotlin/Native */
+@Experimental(level = Experimental.Level.WARNING)
+@Retention(AnnotationRetention.SOURCE)
+@Target(AnnotationTarget.FUNCTION)
+internal annotation class RequiresXMLParser
 
 @EntryPoint
 object ScraperTests {
@@ -34,37 +37,34 @@ object ScraperTests {
 
 	private val MOCK_HEADER_JSON = headersOf("Content-Type" to listOf(ContentType.Application.Json.toString()))
 
-	@Suppress("ConstantConditionIf")
-	private val httpClientGen: () -> HttpClient =
-		if (LIVE_TEST) ({ defaultHTTPClient })
-		else ({
-			HttpClient(MockEngine) {
-				engine { addHandler(mockHandler) }
-				install(JsonFeature)
+	private fun genTestHTTPClient() = HttpClient(MockEngine) {
+		engine {
+			addHandler { request ->
+				val url = request.url
+				if (!url.host.endsWith("youtube.com")) error("no mock data for domain ${url.host}")
+				try {
+					inline fun genResponse(mockProvider: MockProvider, headers: Headers) = mockProvider.mockFromParams(url.parameters).let { (body, status) ->
+						if (body == null) respondError(status) else respond(body, status, headers = headers)
+					}
+					when (url.encodedPath) {
+						"/get_video_info" -> genResponse(VideoInfoMaps, MOCK_HEADER_FORM_ENC)
+						"/list_ajax" -> genResponse(PlaylistData, MOCK_HEADER_JSON)
+						"/search_ajax" -> genResponse(SearchResults, MOCK_HEADER_JSON)
+						else -> null
+					}?.also { delay(1000L) } ?: error("no mock data for $url")
+				} catch (e: Exception) {
+					error("generating response for $url threw an exception of type ${e::class.simpleName}: ${e.message ?: "no message"}")
+				}
 			}
-		})
-
-	private val mockHandler: suspend (HttpRequestData) -> HttpResponseData = { request ->
-		val url = request.url
-		if (!url.host.endsWith("youtube.com")) error("no mock data for domain ${url.host}")
-		try {
-			when (url.encodedPath) {
-				"/get_video_info" -> genResponse(url.parameters, VideoInfoMaps, MOCK_HEADER_FORM_ENC)
-				"/list_ajax" -> genResponse(url.parameters, PlaylistData, MOCK_HEADER_JSON)
-				"/search_ajax" -> genResponse(url.parameters, SearchResults, MOCK_HEADER_JSON)
-				else -> null
-			}?.also { delay(1000L) } ?: error("no mock data for $url")
-		} catch (e: Exception) {
-			error("generating response for $url threw an exception of type ${e::class}: ${e.message ?: "no message"}")
 		}
+		install(JsonFeature)
 	}
 
-	private fun genResponse(params: Parameters, mockProvider: MockProvder, headers: Headers) =
-		mockProvider.mockFromParams(params).let { (body, status) ->
-			if (body == null) respondError(status) else respond(body, status, headers = headers)
-		}
-
-	private suspend fun usingScraper(block: suspend YTKtScraper.() -> Unit) = withConfiguredScraper(httpClientGen(), block)
+	@Suppress("ConstantConditionIf")
+	private suspend fun usingScraper(block: suspend YTKtScraper.() -> Unit) = withConfiguredScraper(
+		if (LIVE_TEST) genDefaultHTTPClient() else genTestHTTPClient(),
+		block
+	)
 
 	@Test
 	fun testCCMetadataFromID() = nativeRunBlocking {

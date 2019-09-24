@@ -12,63 +12,46 @@ import kotlinx.coroutines.channels.ReceiveChannel
  * @see withScraper
  * @see withConfiguredScraper
  */
-class YTKtScraper(val httpClient: HttpClient): Closeable {
-	val decipherer = Decipherer() // holds cached decipher routines
-
+@Suppress("NOTHING_TO_INLINE")
+data class YTKtScraper(val httpClient: HttpClient, val decipherer: Decipherer = Decipherer()): Closeable by httpClient {
 	internal suspend inline fun get(uri: String): String = httpClient.get(uri)
 
 	internal suspend inline fun get(uri: URI): String = httpClient.get(uri)
 
-	@RequiresXMLParser
-	internal suspend inline fun getAndParseHTML(uri: URI) = HTMLParser.parse(httpClient.get(uri))
-
-	@RequiresXMLParser
-	internal suspend inline fun getAndParseXML(uri: URI) = XElement.parse(httpClient.get(uri)).stripNamespaces()
-
 	@EntryPoint
-	@RequiresXMLParser
-	suspend fun CCTrackMetadata.downloadCCsFromMetadata(output: Stream, progress: IProgress<Double>? = null): Unit =
+	suspend inline fun CCTrackMetadata.downloadCCsFromMetadata(output: Stream, progress: IProgress<Double>? = null): Unit =
 		StreamWriter(output, StreamWriter.Companion.Encoding.UTF8, 1024, true).use { writer ->
-			val captions = this.getCaptions(this@YTKtScraper).captions
-			var lineNo = 0
-			captions.forEach {
-				lineNo++ // lines start at 1, pre-increment
+			val captions = this.getCaptions(this@YTKtScraper.httpClient).captions
+			captions.forEachIndexed { lineNo, it ->
 				writer.writeLineAsync("$lineNo\n${it.timespan.toCaptionMarker()}\n${it.text}\n") // serialise and write
 				progress?.report(lineNo.toDouble() / captions.size) // report progress
 			}
 		}
 
-	@RequiresXMLParser
-	suspend fun CCTrackMetadata.getCaptions(): ClosedCaptionsTrack = this.getCaptions(this@YTKtScraper)
+	suspend inline fun CCTrackMetadata.getCaptions(): ClosedCaptionsTrack = this.getCaptions(this@YTKtScraper.httpClient)
 
-	@RequiresXMLParser
-	suspend fun ChannelID.getData(): Channel = this.getData(this@YTKtScraper)
+	suspend inline fun ChannelID.getData(): Channel = this.getData(this@YTKtScraper.httpClient)
 
-	suspend fun PlaylistID.getData(): Playlist = this.getData(this@YTKtScraper)
+	suspend inline fun PlaylistID.getData(): Playlist = this.getData(this@YTKtScraper.httpClient)
 
-	suspend fun SearchQuery.getPartialResults(maxResults: Int): List<Video> = this.getPartialResults(this@YTKtScraper, maxResults)
+	suspend inline fun SearchQuery.getPartialResults(maxResults: Int): List<Video> = this.getPartialResults(this@YTKtScraper.httpClient, maxResults)
 
 	@EntryPoint
-	fun SearchQuery.getResults(scope: CoroutineScope): ReceiveChannel<Video> = this.getResults(this@YTKtScraper, scope)
+	inline fun SearchQuery.getResults(scope: CoroutineScope): ReceiveChannel<Video> = this.getResults(this@YTKtScraper.httpClient, scope)
 
 	@EntryPoint
-	suspend fun StreamMetadata.downloadStreamFromMetadata(output: Stream): Unit = this.getStream(this@YTKtScraper).writeTo(output)
+	suspend inline fun StreamMetadata.downloadStreamFromMetadata(output: Stream): Unit = this.getStream(this@YTKtScraper.httpClient).writeTo(output)
 
-	fun StreamMetadata.getStream(): MediaStream = this.getStream(this@YTKtScraper)
+	inline fun StreamMetadata.getStream(): MediaStream = this.getStream(this@YTKtScraper.httpClient)
 
-	@RequiresXMLParser
-	suspend fun Username.getChannelID(): ChannelID = this.getChannelID(this@YTKtScraper)
+	suspend inline fun Username.getChannelID(): ChannelID = this.getChannelID(this@YTKtScraper.httpClient)
 
 	@EntryPoint
-	suspend fun Username.getData(): User = this.getData(this@YTKtScraper)
+	suspend inline fun Username.getData(): User = this.getData(this@YTKtScraper.httpClient)
 
-	suspend fun VideoID.getCCMetadata(): List<CCTrackMetadata> = this.getCCMetadata(this@YTKtScraper)
+	suspend inline fun VideoID.getCCMetadata(): List<CCTrackMetadata> = this.getCCMetadata(this@YTKtScraper.httpClient)
 
-	@RequiresXMLParser
-	suspend fun VideoID.getData(): Video = this.getData(this@YTKtScraper)
+	suspend inline fun VideoID.getData(): Video = this.getData(this@YTKtScraper.httpClient)
 
-	@RequiresXMLParser
-	suspend fun VideoID.getStreamMetadataSet(): StreamMetadataSet = this.getStreamMetadataSet(this@YTKtScraper)
-
-	override fun close() = httpClient.close()
+	suspend inline fun VideoID.getStreamMetadataSet(): StreamMetadataSet = this.getStreamMetadataSet(this@YTKtScraper.httpClient, this@YTKtScraper.decipherer)
 }
